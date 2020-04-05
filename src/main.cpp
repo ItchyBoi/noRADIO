@@ -4,6 +4,7 @@
 #include <esp_wifi.h>
 #include <EEPROM.h>
 #include <ESP32Encoder.h>
+//test rep
 
 #define VS1053_CS    32 
 #define VS1053_DCS   33  
@@ -12,20 +13,22 @@
 #define EEPROM_SIZE 2
 
 #define onoffbutton 15
-#define onoffpin 21
+#define onoffsignal 21
 #define knockAIN 34 // ADC CH1 cant be used while wifi is active
 
-
-const int fiftymill = 50;
-const int one_s = 1000;
-const int thirty_s = 30000;
+long interval = 1000; 
+int SECONDS_TO_AUTOSAVE = 30;
+long seconds = 0;
+long previousMillis = 0;
 
 int radioStation = 0;
 int previousRadioStation = -1;
 
 int volume = -1;
 bool active = true;
-bool prev_onoffbutton = true;
+
+int isr_timer = 0;
+
 
 char ssid[] = "WIFIblock";
 char pass[] = "F1delistH0me";
@@ -51,8 +54,7 @@ int readStationFromEEPROM();
 void writeStationToEEPROM(int *freq);
 void station_connect(int station_no);
 void volumecontrol();
-void onoff();
-void timing_routine();
+void isr_onoff();
 
 
 
@@ -70,34 +72,37 @@ void setup () {
   volonoff.attachHalfQuad(16,17);
   volonoff.setCount(100);
 
+  attachInterrupt(digitalPinToInterrupt(onoffbutton), isr_onoff, RISING);
+
   SPI.begin();
   EEPROM.begin(EEPROM_SIZE);
   initMP3Decoder();
   connectToWIFI();
   //readStationFromEEPROM();
 
-  //pinMode(onoffpin, OUTPUT);
+  pinMode(onoffsignal, OUTPUT);
 }
 
 /////////////// MAINLOOP ///////////////
 
 void loop() {
     
-  //play_buffer();
-  //timing_routine();
+  play_buffer();
+  radioroutine();
+
   //int sensor = analogRead(knockAIN);
 
 }
 
 
-void onoff(){
-  bool tmp_onoffbutton = digitalRead(onoffbutton);
-  if (tmp_onoffbutton == true && prev_onoffbutton == false){
-    active = !active;
-    Serial.println(active);
-    digitalWrite(onoffpin,active);
-  }
-  prev_onoffbutton = tmp_onoffbutton;
+void isr_onoff(){
+    int tmp_isr_timer = millis();
+    if (tmp_isr_timer - isr_timer >= 1000){
+      active = !active;
+      Serial.println(active);
+      digitalWrite(onoffsignal,active);
+      isr_timer = millis();
+    }
 }
 
 void volumecontrol(){
@@ -120,36 +125,34 @@ void volumecontrol(){
   }
 }
 
-void timing_routine(){
+void radioroutine(){
+
+  volumecontrol();
+
   unsigned long currentMillis = millis();
-
-  if(currentMillis % fiftymill == 0){ // every 50 mill
-
-    onoff();
-    volumecontrol();
-
+  if(currentMillis - previousMillis > interval) 
+    {
     if(radioStation!=previousRadioStation)
     {
       station_connect(radioStation);
       previousRadioStation = radioStation;
-    }
-
-
-    if(currentMillis % one_s == 0){ // every second
-      
-      Serial.println("radiostation: "+String(radioStation)+" MEM buffer: "+client.available());
-
-      if(currentMillis % thirty_s == 0){ // every 30 seconds
-
-        if(readStationFromEEPROM()!=radioStation)
+      seconds = 0;
+    }else
+    {
+      seconds++;
+      if(seconds == SECONDS_TO_AUTOSAVE)
+      {
+        seconds = 0;
+        int readStation = readStationFromEEPROM();
+        if(readStation!=radioStation)
           {
             Serial.println("Saving new station to EEPROM");
             writeStationToEEPROM(&radioStation);
           }
-
-
       }
     }
+    previousMillis = currentMillis; 
+    Serial.println("radiostation: "+String(radioStation)+" MEM buffer: "+client.available());
   }
 }
 
