@@ -65,14 +65,14 @@ void setup () {
   Serial.begin(115200);
   delay(500);
   Serial.println("happy beep");
-
+/*
   ESP32Encoder::useInternalWeakPullResistors=true;
   volonoff.attachHalfQuad(16,17);
   volonoff.setCount(100);
 
   SPI.begin();
   EEPROM.begin(EEPROM_SIZE);
-  initMP3Decoder();
+  initMP3Decoder();*/
   connectToWIFI();
   //readStationFromEEPROM();
 
@@ -178,9 +178,10 @@ void initMP3Decoder()
   void connectToWIFI()
   {
     WiFi.begin(ssid, pass);
-      while (WiFi.status() != WL_CONNECTED) {
-        delay(500);
-        Serial.print(".");
+      if (WiFi.status() != WL_CONNECTED) {
+        Serial.print("can't connect to wifi");
+        delay(2000);
+        ESP.restart();
    }
   }
 
