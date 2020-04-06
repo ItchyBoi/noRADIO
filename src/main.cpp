@@ -30,8 +30,8 @@ bool active = true;
 int isr_timer = 0;
 
 
-char ssid[] = "WIFIblock";
-char pass[] = "F1delistH0me";
+char ssid[] = "1 Phone"; //"WIFIblock";
+char pass[] = "duziduzi"; //"F1delistH0me";
 
 // Few Radio Stations // no https!! // get some from http://www.radio-browser.info
 //  egofm 128kbps
