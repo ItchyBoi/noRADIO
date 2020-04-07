@@ -4,7 +4,6 @@
 #include <esp_wifi.h>
 #include <EEPROM.h>
 #include <ESP32Encoder.h>
-//test rep
 
 #define VS1053_CS    32 
 #define VS1053_DCS   33  
@@ -30,8 +29,8 @@ bool active = true;
 int isr_timer = 0;
 
 
-char ssid[] = "1 Phone"; //"WIFIblock";
-char pass[] = "duziduzi"; //"F1delistH0me";
+char ssid[] = "WIFIblock";
+char pass[] = "F1delistH0me";
 
 // Few Radio Stations // no https!! // get some from http://www.radio-browser.info
 //  egofm 128kbps
