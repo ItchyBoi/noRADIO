@@ -1,3 +1,5 @@
+// "bookmark" for later features
+
 #include <VS1053.h>  //https://github.com/baldram/ESP_VS1053_Library
 #include <WiFi.h>
 #include <HTTPClient.h>
@@ -9,25 +11,34 @@
 #define VS1053_DCS   33  
 #define VS1053_DREQ  35 
 
-#define EEPROM_SIZE 2
+// EEPROM data (int = 4 bytes)
+// 0 radiostation (value 0-9)
+// 1 volume (value 0-100)
+// 100-199 wifi ssid //bookmark: save login in eeprom and encrypt it
+// 200-299 wifi pass
+#define EEPROM_SIZE 512 // 0-255Bit savable in one adress = 1 byte
+                        // int = 4 bytes but if int is smaller then 255 it just takes one adress
+                        // char = 1 byte // be aware of \0 !
+#define radiostationaddrstart 0
+#define volumeaddrstart 1
+#define ssidaddrstart 100
+#define passaddrstart 200
 
 #define onoffbutton 15
 #define onoffsignal 21
 #define knockAIN 34 // ADC CH1 cant be used while wifi is active
 
-long interval = 1000; 
-int SECONDS_TO_AUTOSAVE = 30;
-long seconds = 0;
-long previousMillis = 0;
+int fiftymill = 50; 
+int thirtysec = 30000;
+int onesec = 1000;
+unsigned long millcounter = 0;
+unsigned long previousmillis = 0;
 
-int radioStation = 0;
-int previousRadioStation = -1;
+int radiostation = 1;
+int previousradiostation = -1;
 
 int volume = -1;
 bool active = true;
-
-int isr_timer = 0;
-
 
 char ssid[] = "WIFIblock";
 char pass[] = "F1delistH0me";
@@ -46,40 +57,41 @@ VS1053 player(VS1053_CS, VS1053_DCS, VS1053_DREQ);
 ESP32Encoder volonoff;
 
 void play_buffer();
-void radioroutine();
+void time_routine();
 void initMP3Decoder();
 void connectToWIFI();
-int readStationFromEEPROM();
-void writeStationToEEPROM(int *freq);
+int readEEPROM(String name, int startaddr);
+void writeEEPROM(String name, int val, int startaddr);
 void station_connect(int station_no);
 void volumecontrol();
-void isr_onoff();
-
-
-
+void stationchange();
+void savedata();
+void readEEPROM();
+void writeEEPROM();
 
 
 /////////////// SETUP ///////////////
 
 void setup () {
-
+  SPI.begin();
+  EEPROM.begin(EEPROM_SIZE);
   Serial.begin(115200);
   delay(500);
   Serial.println("happy beep");
 
+  connectToWIFI();
+
   ESP32Encoder::useInternalWeakPullResistors=true;
   volonoff.attachHalfQuad(16,17);
-  volonoff.setCount(100);
+  volonoff.setCount(readEEPROM("volume",volumeaddrstart));
 
-  attachInterrupt(digitalPinToInterrupt(onoffbutton), isr_onoff, RISING);
-
-  SPI.begin();
-  EEPROM.begin(EEPROM_SIZE);
+  radiostation = readEEPROM("station",radiostationaddrstart);
   initMP3Decoder();
-  connectToWIFI();
-  //readStationFromEEPROM();
-
-  pinMode(onoffsignal, OUTPUT);
+  stationchange();
+  
+  Serial.println(sizeof(int));
+  Serial.println(sizeof(volume));
+  Serial.println(sizeof(ssid));
 }
 
 /////////////// MAINLOOP ///////////////
@@ -87,21 +99,10 @@ void setup () {
 void loop() {
     
   play_buffer();
-  radioroutine();
+  time_routine();
 
   //int sensor = analogRead(knockAIN);
 
-}
-
-
-void isr_onoff(){
-    int tmp_isr_timer = millis();
-    if (tmp_isr_timer - isr_timer >= 1000){
-      active = !active;
-      Serial.println(active);
-      digitalWrite(onoffsignal,active);
-      isr_timer = millis();
-    }
 }
 
 void volumecontrol(){
@@ -117,44 +118,57 @@ void volumecontrol(){
     volonoff.setCount(0);
   } 
   
-  if(volume != tmpvol){
     player.setVolume(tmpvol);
     Serial.println("volume:"+String(tmpvol));
     volume = tmpvol;
-  }
 }
 
-void radioroutine(){
+void time_routine(){
 
-  volumecontrol();
+  unsigned long currentmillis = millis();
+  if(currentmillis - previousmillis > fiftymill){
 
-  unsigned long currentMillis = millis();
-  if(currentMillis - previousMillis > interval) 
-    {
-    if(radioStation!=previousRadioStation)
-    {
-      station_connect(radioStation);
-      previousRadioStation = radioStation;
-      seconds = 0;
-    }else
-    {
-      seconds++;
-      if(seconds == SECONDS_TO_AUTOSAVE)
-      {
-        seconds = 0;
-        int readStation = readStationFromEEPROM();
-        if(readStation!=radioStation)
-          {
-            Serial.println("Saving new station to EEPROM");
-            writeStationToEEPROM(&radioStation);
-          }
+    volumecontrol();
+    onesec = onesec - 50;
+    if(onesec <= 0){
+
+      onesec = 1000;
+      Serial.println("radiostation: "+String(radiostation)+" MEM buffer: "+client.available());
+      stationchange();
+
+      thirtysec = thirtysec - 1000;
+      if(thirtysec <= 0){
+
+        thirtysec = 30000;
+        savedata();
       }
     }
-    previousMillis = currentMillis; 
-    Serial.println("radiostation: "+String(radioStation)+" MEM buffer: "+client.available());
+  previousmillis = currentmillis;
   }
 }
 
+void stationchange(){
+  if(radiostation!=previousradiostation){
+
+        station_connect(radiostation);
+        previousradiostation = radiostation;
+}
+}
+void savedata(){
+  int readStation = readEEPROM("station", radiostationaddrstart);
+          if(readStation!=radiostation){
+
+            Serial.println("Saving new station to EEPROM");
+            writeEEPROM("station",radiostation, radiostationaddrstart);
+          }
+  int readvolume = readEEPROM("volume", volumeaddrstart);
+          if(readvolume!=volume){
+
+            Serial.println("Saving new volume to EEPROM");
+            writeEEPROM("volume",volume, volumeaddrstart);
+          }
+}
+          
 void play_buffer(){
         if (client.available() > 0)
       {
@@ -173,40 +187,33 @@ void station_connect (int station_no ) {
 void initMP3Decoder()
   {
     player.begin();
-    player.switchToMp3Mode(); // optional, some boards require this
+    player.switchToMp3Mode();
     volumecontrol();
   }
 
   void connectToWIFI()
   {
+    Serial.print("connecting wifi..");
     WiFi.begin(ssid, pass);
       while (WiFi.status() != WL_CONNECTED) {
         delay(500);
         Serial.print(".");
    }
+   Serial.println("done");
   }
 
-  int readStationFromEEPROM()
-  {
-  int station;
-  byte ByteArray[2];
-  for(int x = 0; x < 2; x++)
-  {
-   ByteArray[x] = EEPROM.read(x);    
-  }
-  memcpy(&station, ByteArray, 2);
-  Serial.println("readFrequencyFromEEPROM(): "+String(station));
-  return station;
-}
 
-void writeStationToEEPROM(int *freq)
-{
- byte ByteArray[2];
- memcpy(ByteArray, freq, 2);
- for(int x = 0; x < 2; x++)
- {
-   EEPROM.write(x, ByteArray[x]);
- }  
- EEPROM.commit();
- Serial.println("writeFrequencyToEEPROM(): "+String(radioStation));
-}
+  int readEEPROM(String name, int startaddr){
+
+    int val;
+    val = EEPROM.read(startaddr);    
+    Serial.println("readEEPROM("+name+"): "+String(val));
+    return val;
+  }
+
+  void writeEEPROM(String name, int val, int startaddr){
+  
+    EEPROM.write(startaddr, val);
+    EEPROM.commit();
+    Serial.println("writeEEPROM("+String(name)+"): "+String(val));
+  }
